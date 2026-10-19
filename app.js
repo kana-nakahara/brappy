@@ -25,6 +25,8 @@ const btnHome = document.getElementById('btnHome');
 
 let state = { view: 'top', me: null, case: null, seg: '取引', hist: null };
 let idToken = null;
+/* 読むだけの操作（GAS の READ_ONLY_ROUTES と同じ）。取り直してよい */
+const READ_ONLY_ACTIONS = ['apply.init', 'zip', 'state', 'me', 'cases', 'case', 'payments', 'form2.get'];
 /* フォーム1で送る欄（ログインし直すときの控えにも使う） */
 const APPLY_FIELDS = ['顧客名', '顧客名カナ', '電話番号', '郵便番号', '都道府県', '住所1', '住所2',
   '宅配キット種別', '集荷希望日', '集荷希望時間帯', '同意'];
@@ -124,15 +126,20 @@ async function apiCall(action, payload, opt) {
     /* 画面確認用プレビューだけで使う（本番の config.js には無い） */
     j = await CFG.DEV_API(body);
   } else {
-    let r;
-    try {
-      r = await fetch(CFG.GAS_URL, {
-        method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body)
-      });
-    } catch (e) {
-      throw new Error('通信できませんでした。電波の良いところでお試しください');
+    /* 🔴 GAS はまれに JSON でない応答（エラーのページ）を返す。読むだけの操作は1回だけ取り直す
+          （261019 撮影：承認の直後にマイページを開き直す呼び出しが1回だけこうなった） */
+    for (let i = 0; i < (READ_ONLY_ACTIONS.indexOf(action) >= 0 ? 2 : 1) && !j; i++) {
+      if (i) await new Promise(ok => setTimeout(ok, 800));
+      let r;
+      try {
+        r = await fetch(CFG.GAS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body)
+        });
+      } catch (e) {
+        throw new Error('通信できませんでした。電波の良いところでお試しください');
+      }
+      try { j = await r.json(); } catch (e) { /* 下で扱う */ }
     }
-    try { j = await r.json(); } catch (e) { /* 下で扱う */ }
   }
   if (!j) throw new Error('エラーが発生しました');
   if (!j.ok) {
