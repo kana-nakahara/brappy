@@ -25,6 +25,9 @@ const btnHome = document.getElementById('btnHome');
 
 let state = { view: 'top', me: null, case: null, seg: '取引', hist: null };
 let idToken = null;
+/* フォーム1で送る欄（ログインし直すときの控えにも使う） */
+const APPLY_FIELDS = ['顧客名', '顧客名カナ', '電話番号', '郵便番号', '都道府県', '住所1', '住所2',
+  '宅配キット種別', '集荷希望日', '集荷希望時間帯', '同意'];
 
 /* ---------------------------------------------------------------- util */
 const yen = n => (n === null || n === undefined) ? '—' : Number(n).toLocaleString('ja-JP') + '円';
@@ -213,8 +216,7 @@ async function initLiff(liffId, required) {
   /* 🔴 LINE の外のブラウザでは、期限（1時間）の切れた IDトークンがそのまま返る。
         フォーム1はそれでも「未連携」として受け付けてしまう（前回の入力が出ず、LINE と紐づかない）ので、
         切れていたらログインし直す（261009 実機） */
-  const dec = liff.getDecodedIDToken ? liff.getDecodedIDToken() : null;
-  if (dec && dec.exp * 1000 < Date.now() + 60e3 && !sessionStorage.getItem('relogin')) {
+  if (tokenExpiring() && !sessionStorage.getItem('relogin')) {
     sessionStorage.setItem('relogin', '1');
     liff.logout();
     liff.login({ redirectUri: location.href });
@@ -222,6 +224,12 @@ async function initLiff(liffId, required) {
   }
   idToken = liff.getIDToken();
   return !!idToken;
+}
+
+/** IDトークンの期限（1時間）が切れているか、1分以内に切れる */
+function tokenExpiring() {
+  const dec = window.liff && liff.getDecodedIDToken ? liff.getDecodedIDToken() : null;
+  return !!(dec && dec.exp * 1000 < Date.now() + 60e3);
 }
 
 /* ---------------------------------------------------------------- 端末に残す写し
@@ -806,6 +814,21 @@ async function viewApply(tpl) {
       form.insertBefore(note, form.firstChild);
     }
   };
+  /* ログインし直して戻ってきたとき：控えた入力をそのまま戻す（前回の入力より優先） */
+  let draft = null;
+  try { draft = JSON.parse(sessionStorage.getItem('applyDraft') || 'null'); sessionStorage.removeItem('applyDraft'); } catch (e) { draft = null; }
+  if (draft) {
+    APPLY_FIELDS.forEach(n => {
+      const el = F(n);
+      if (!el || draft[n] === undefined) return;
+      if (n === '同意') el.checked = draft[n] === '1';
+      else el.value = draft[n];   /* 宅配キット（ラジオ）は RadioNodeList の value で選べる */
+    });
+    const note = document.createElement('p');
+    note.className = 'prefill';
+    note.textContent = 'LINE にログインし直しました。内容をご確認のうえ、もう一度「この内容で申し込む」を押してください。';
+    form.insertBefore(note, form.firstChild);
+  }
   fillPrev(prev);
   prevP.then(fillPrev);
 
@@ -814,6 +837,7 @@ async function viewApply(tpl) {
   const jst = ms => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);
   dt.min = jst(Date.now());
   dt.value = jst(Date.now() + 2 * 864e5);
+  if (draft && draft['集荷希望日'] >= dt.min) dt.value = draft['集荷希望日'];
 
   /* F-02 入力チェック。抜けた欄・形の違う欄をその場で知らせる */
   const RULES = {
@@ -875,14 +899,22 @@ async function viewApply(tpl) {
       err.hidden = false; return;
     }
     const btn = form.querySelector('button[type=submit]');
+    const fd = new FormData(form);
+    const p = {};
+    APPLY_FIELDS.forEach(n => { p[n] = fd.get(n) || ''; });
+    /* 🔴 開いたまま1時間たつと IDトークンが切れる（LINE の外のブラウザ）。入力を控えてからログインし直し、戻ったら入れ直す（261019） */
+    try { sessionStorage.setItem('applyDraft', JSON.stringify(p)); } catch (e) { /* 控えられなくても進める */ }
+    if (line && tokenExpiring() && !sessionStorage.getItem('relogin')) {
+      sessionStorage.setItem('relogin', '1');
+      liff.logout();
+      liff.login({ redirectUri: location.href });
+      return;
+    }
     btn.disabled = true;
     btn.textContent = '送信しています…';
     try {
-      const fd = new FormData(form);
-      const p = {};
-      ['顧客名', '顧客名カナ', '電話番号', '郵便番号', '都道府県', '住所1', '住所2',
-        '宅配キット種別', '集荷希望日', '集荷希望時間帯', '同意'].forEach(n => { p[n] = fd.get(n) || ''; });
       const r = await api('apply', p);
+      try { sessionStorage.removeItem('applyDraft'); } catch (e) { /* 何もしない */ }
       viewDone(r);
     } catch (e) {
       err.textContent = e.message; err.hidden = false; btn.disabled = false;
