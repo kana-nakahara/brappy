@@ -53,6 +53,14 @@ function fmtMD(s) {
    すぐ返る通信でちらつかないよう 150ms 待ってから出す。
    開いた直後（フォームのくるくる .loading・マイページの枠 .skel）が出ている間は重ねない */
 let busyN = 0, busyT = null;
+/* iPhone はキーボードが出ている間も fixed をキーボードの裏まで含めた高さで置くので、くるくるが見えている範囲の
+   真ん中に来ない。見えている範囲（visualViewport）に合わせる（261021） */
+function fitBusy(el) {
+  const v = window.visualViewport;
+  if (!v) return;
+  Object.assign(el.style, { top: v.offsetTop + 'px', left: v.offsetLeft + 'px', right: 'auto', bottom: 'auto',
+    width: v.width + 'px', height: v.height + 'px' });
+}
 function busy(on) {
   let el = document.getElementById('busy');
   if (!el) {
@@ -63,12 +71,16 @@ function busy(on) {
     el.setAttribute('aria-label', '読み込み中');
     el.innerHTML = '<span class="spinner"></span>';
     document.body.appendChild(el);
+    if (window.visualViewport) {
+      visualViewport.addEventListener('resize', () => fitBusy(el));
+      visualViewport.addEventListener('scroll', () => fitBusy(el));
+    }
   }
   busyN = Math.max(0, busyN + (on ? 1 : -1));
   if (busyN > 0 && !busyT && !el.classList.contains('on')) {
     busyT = setTimeout(() => {
       busyT = null;
-      if (busyN > 0 && !app.querySelector(':scope > .loading, :scope > .skel')) el.classList.add('on');
+      if (busyN > 0 && !app.querySelector(':scope > .loading, :scope > .skel')) { fitBusy(el); el.classList.add('on'); }
     }, 150);
   }
   if (busyN === 0) {
