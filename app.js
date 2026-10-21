@@ -252,7 +252,8 @@ function tokenExpiring() {
 }
 
 /* ---------------------------------------------------------------- 端末に残す写し
-   GAS は冷えていると1回数秒かかる。開いた瞬間は前回の内容を出し、裏で取った最新に差し替える。
+   GAS は冷えていると1回数秒かかる。誰にでも同じ内容（キット・時間帯）と前回の入力は、開いた瞬間に写しを使う。
+   🔴 取引の状況（マイページの me）は写しを使わない（古い状況が見えてから差し替わる＝261021）。
    LINE ユーザーごとに分けて持つ（同じ端末で別の LINE に切り替えても混ざらない）。1日で捨てる */
 const STORE_TTL = 24 * 3600e3;
 /* shared=true は誰にでも同じ内容（キット・時間帯など）。LINE の準備を待たずに読み書きできる */
@@ -283,27 +284,17 @@ async function boot() {
   if (PAGE === 'apply') return viewApply(tpl);
 
   await Promise.all([tpl, initLiff(CFG.LIFF_MYPAGE, true)]);
+  /* 🔴 261021：取引の状況は端末の写しから出さない。前回の内容を先に出すと、古い状況が数秒見えてから差し替わった
+        （リッチメニューから開くたび）。最新が届くまで index.html の枠（.skel）のままにする。古い写しは捨てる */
+  dropStore('me');
   /* 未連携なら me は 401 になる。ここでは捨てる（ログインし直しは state の 401 に任せる） */
-  const cached = loadStore('me');
-  const meP = api('me', null, { noRelogin: true, quiet: !!cached }).catch(() => null);
-  if (cached) {
-    showChrome(true);
-    state.prefetchedMe = cached;
-    go('top');
-  }
-  const s = await api('state', null, { quiet: !!cached });
-  if (!s['連携済']) { dropStore('me'); return viewLogin(); }
+  const meP = api('me', null, { noRelogin: true }).catch(() => null);
+  const s = await api('state');
+  if (!s['連携済']) return viewLogin();
   const me = await meP;
-  if (me) saveStore('me', me);
-  if (!cached) {
-    showChrome(true);
-    state.prefetchedMe = me;
-    go('top');
-  } else if (me && state.view === 'top' && JSON.stringify(me) !== JSON.stringify(cached)) {
-    /* 写しと違っていたら、まだ TOP にいるときだけ最新で描き直す（ほかの画面へ移っていたら邪魔しない） */
-    state.prefetchedMe = me;
-    go('top');
-  }
+  showChrome(true);
+  state.prefetchedMe = me;
+  go('top');
 }
 
 function go(view, arg) {
@@ -386,7 +377,6 @@ async function viewTop() {
   const pre = state.prefetchedMe;
   state.prefetchedMe = null;
   const me = state.me = pre || await api('me');
-  if (!pre) saveStore('me', me);
   const a = me['案件'];
   const todo = me['未完了'] || [];
   const d = {
