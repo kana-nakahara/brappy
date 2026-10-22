@@ -129,10 +129,56 @@ async function api(action, payload, opt) {
   }
 }
 
+function newReqId() {
+  return (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+    : Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+}
+
+/** 1回送る。使える応答（JSON で、doGet の応答でない）なら返し、そうでなければ null。届かなければ例外 */
+async function postOnce(body) {
+  const r = await fetch(CFG.GAS_URL, {
+    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body)
+  });
+  let j = null;
+  try { j = await r.json(); } catch (e) { return null; }
+  return j && !j.service ? j : null;
+}
+
+/** fn() が ms 以内に返らなければ、もう1本出して先に使える応答を返した方を使う（読む操作だけ） */
+function raceSlow(fn, ms) {
+  return new Promise((resolve, reject) => {
+    let pending = 0, finished = false, lastErr = null, timer = null;
+    /* 使える応答が無いまま終わった。2本目を待っていなければ null（呼ぶ側が取り直す）か例外で返す */
+    const end = () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (pending > 0) return;
+      finished = true;
+      if (lastErr) reject(lastErr); else resolve(null);
+    };
+    const start = () => {
+      pending++;
+      fn().then(j => {
+        pending--;
+        if (finished) return;
+        if (j) { finished = true; if (timer) clearTimeout(timer); resolve(j); } else end();
+      }, e => {
+        pending--;
+        if (finished) return;
+        lastErr = e;
+        end();
+      });
+    };
+    start();
+    timer = setTimeout(() => { timer = null; if (!finished) start(); }, ms);
+  });
+}
+
 /* GAS は text/plain で受ける（application/json はプリフライトになり GAS が応えられない） */
 async function apiCall(action, payload, opt) {
   if (!CFG.GAS_URL) throw new Error('準備中です（API の URL が未設定です）');
-  const body = Object.assign({ action, idToken }, payload || {});
+  const reads = READ_ONLY_ACTIONS.indexOf(action) >= 0;
+  /* 書く操作には1回ごとの番号を付ける。GAS は同じ番号の2回目には1回目の結果を返すだけ（二重の申込にならない） */
+  const body = Object.assign({ action, idToken }, reads ? {} : { reqId: newReqId() }, payload || {});
   let j = null;
   if (CFG.DEV_API) {
     /* 画面確認用プレビューだけで使う（本番の config.js には無い） */
@@ -140,24 +186,20 @@ async function apiCall(action, payload, opt) {
   } else {
     /* 🔴 GAS はまれに JSON でない応答（エラーのページ）や、POST なのに doGet の応答（{ ok, service }）を返す。
           doGet の応答は ok:true なので、そのまま受けると「成功」に見えて画面が落ちる・書いていないのに完了と出る
-          （261022 実測：36 回中 4 回、どれも 10 秒以上かかった回）。読むだけの操作は取り直す */
-    const reads = READ_ONLY_ACTIONS.indexOf(action) >= 0;
-    let stray = false;
-    for (let i = 0; i < (reads ? 3 : 1) && !j; i++) {
+          （261022 実測：36 回中 4 回、どれも 10 秒以上かかった回。「実行数」ではその回は doPost が動かず doGet だけが動いている）。
+          読む操作は取り直し、4 秒返ってこなければ2本目を出して早い方を使う。書く操作は同じ番号で1回だけ送り直す */
+    let netErr = null;
+    for (let i = 0; i < (reads ? 3 : 2) && !j; i++) {
       if (i) await new Promise(ok => setTimeout(ok, 800));
-      let r;
       try {
-        r = await fetch(CFG.GAS_URL, {
-          method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body)
-        });
+        j = reads ? await raceSlow(() => postOnce(body), 4000) : await postOnce(body);
       } catch (e) {
-        throw new Error('通信できませんでした。電波の良いところでお試しください');
+        netErr = e;
+        break;
       }
-      try { j = await r.json(); } catch (e) { /* 下で扱う */ }
-      if (j && j.service) { j = null; stray = true; }
     }
-    /* 書く操作は、届いたかどうかが分からないので取り直さない（二重の申込になりうる） */
-    if (!j && stray && !reads) {
+    if (!j && netErr) throw new Error('通信できませんでした。電波の良いところでお試しください');
+    if (!j && !reads) {
       throw new Error('通信が混み合っていました。お手数ですが、画面を開き直して反映されているかご確認ください');
     }
   }
