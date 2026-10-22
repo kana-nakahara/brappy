@@ -260,6 +260,9 @@ p.done{color:var(--ok);font-weight:700;text-align:center;margin:16px 0 0;backgro
 .shot-box em{font-style:normal}
 .shot-box.set{border-style:solid; border-color:var(--ok); background-color:var(--ok-soft)}
 .shot-box.set em{color:var(--ok); font-weight:700}
+/* 撮った写真を裏で送っている進み具合（261022）。枠の下端の細い帯 */
+.shot-box .up{position:absolute; left:0; right:0; bottom:0; height:4px; background:rgba(0,0,0,.08); z-index:2; overflow:hidden}
+.shot-box .up i{display:block; height:100%; width:0; background:var(--red); transition:width .25s}
 /* 撮った写真を枠に映す（app.js が background-image を入れる） */
 .shot-box.has-img::before{display:none}
 .shot-box.has-img::after{content:""; position:absolute; inset:0; background:linear-gradient(180deg,rgba(0,0,0,0) 40%,rgba(0,0,0,.6))}

@@ -26,7 +26,7 @@ const btnHome = document.getElementById('btnHome');
 let state = { view: 'top', me: null, case: null, seg: '取引', hist: null };
 let idToken = null;
 /* 読むだけの操作（GAS の READ_ONLY_ROUTES と同じ）。取り直してよい */
-const READ_ONLY_ACTIONS = ['apply.init', 'zip', 'state', 'me', 'cases', 'case', 'payments', 'form2.get'];
+const READ_ONLY_ACTIONS = ['apply.init', 'zip', 'state', 'boot', 'me', 'cases', 'case', 'payments', 'form2.get'];
 /* フォーム1で送る欄（ログインし直すときの控えにも使う） */
 const APPLY_FIELDS = ['顧客名', '顧客名カナ', '電話番号', '郵便番号', '都道府県', '住所1', '住所2',
   '宅配キット種別', '集荷希望日', '集荷希望時間帯', '同意'];
@@ -134,14 +134,26 @@ function newReqId() {
     : Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
 }
 
-/** 1回送る。使える応答（JSON で、doGet の応答でない）なら返し、そうでなければ null。届かなければ例外 */
-async function postOnce(body) {
-  const r = await fetch(CFG.GAS_URL, {
-    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body)
-  });
+/** 1回送る。使える応答（JSON で、doGet の応答でない）なら返し、そうでなければ null。届かなければ例外。
+ *  onProgress があるとき（画像の送信）は XHR で送り、送れた割合を知らせる（電波の悪い所で「進んでいる」と分かるように） */
+async function postOnce(body, onProgress) {
+  const text = JSON.stringify(body);
+  const usable = j => (j && !j.service ? j : null);
+  if (onProgress) {
+    return new Promise((ok, ng) => {
+      const x = new XMLHttpRequest();
+      x.open('POST', CFG.GAS_URL);
+      x.setRequestHeader('Content-Type', 'text/plain;charset=utf-8');
+      x.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+      x.onload = () => { let j = null; try { j = JSON.parse(x.responseText); } catch (e) { /* 下で null */ } ok(usable(j)); };
+      x.onerror = () => ng(new Error('net'));
+      x.send(text);
+    });
+  }
+  const r = await fetch(CFG.GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: text });
   let j = null;
   try { j = await r.json(); } catch (e) { return null; }
-  return j && !j.service ? j : null;
+  return usable(j);
 }
 
 /** fn() が ms 以内に返らなければ、もう1本出して先に使える応答を返した方を使う（読む操作だけ） */
@@ -192,7 +204,7 @@ async function apiCall(action, payload, opt) {
     for (let i = 0; i < (reads ? 3 : 2) && !j; i++) {
       if (i) await new Promise(ok => setTimeout(ok, 800));
       try {
-        j = reads ? await raceSlow(() => postOnce(body), 4000) : await postOnce(body);
+        j = reads ? await raceSlow(() => postOnce(body), 4000) : await postOnce(body, opt && opt.onProgress);
       } catch (e) {
         netErr = e;
         break;
@@ -253,7 +265,7 @@ function showChrome(on) {
 
 /* テンプレートは2画面で共有するため別ファイルに置き、起動時に取り込む */
 async function loadTemplates() {
-  const r = await fetch('templates.html', { cache: 'no-cache' });
+  const r = await fetch('templates.html');
   if (!r.ok) throw new Error('画面を読み込めませんでした');
   const holder = document.createElement('div');
   holder.innerHTML = await r.text();
@@ -337,14 +349,42 @@ async function boot() {
   /* 🔴 261021：取引の状況は端末の写しから出さない。前回の内容を先に出すと、古い状況が数秒見えてから差し替わった
         （リッチメニューから開くたび）。最新が届くまで index.html の枠（.skel）のままにする。古い写しは捨てる */
   dropStore('me');
-  /* 未連携なら me は 401 になる。ここでは捨てる（ログインし直しは state の 401 に任せる） */
-  const meP = api('me', null, { noRelogin: true }).catch(() => null);
-  const s = await api('state');
-  if (!s['連携済']) return viewLogin();
-  const me = await meP;
+  /* 261022：起動は boot 1本（state ＋ me）。往復が1つ減る＝電波の悪い所で効く。GAS が古くて boot が無ければ従来の2本 */
+  let me = null;
+  try {
+    me = await api('boot');
+  } catch (e) {
+    if (e.status !== 404) throw e;
+  }
+  if (!me) {
+    /* 未連携なら me は 401 になる。ここでは捨てる（ログインし直しは state の 401 に任せる） */
+    const meP = api('me', null, { noRelogin: true }).catch(() => null);
+    const s = await api('state');
+    if (!s['連携済']) return viewLogin();
+    me = await meP;
+  } else if (!me['連携済']) {
+    return viewLogin();
+  }
   showChrome(true);
   state.prefetchedMe = me;
   go('top');
+}
+
+/* TOP を出したあと、次に開きそうな画面（登録）のデータを裏で先に取っておく（開いた瞬間に出す）。
+   書いたら捨てる（古い内容を出さない） */
+function prefetchNext() {
+  if (state.pre) return;
+  state.pre = { form2: api('form2.get', { 先読み: 1 }, { quiet: true, noRelogin: true }).catch(() => null) };
+}
+function dropPrefetch() { state.pre = null; }
+
+/** TOP の内容を手元で更新して描き直す（サーバーへ取りに行かない）。書く操作の応答に案件が入っているとき */
+function refreshTopWith(patch) {
+  if (!state.me) return go('top');
+  Object.assign(state.me, patch);
+  state.prefetchedMe = state.me;
+  dropPrefetch();
+  return go('top');
 }
 
 function go(view, arg) {
@@ -477,6 +517,7 @@ async function viewTop() {
   wireApplyLinks(node);
   wireLineChat(node);
   mount(node);
+  prefetchNext();
 }
 
 /* ---------------------------------------------------------------- M-06 集荷日時・キットの変更 */
@@ -505,9 +546,9 @@ async function viewPickup() {
     btn.disabled = true;
     try {
       const fd = new FormData(form);
-      await api('pickup.update', { 案件id: a['案件id'], 集荷希望日: fd.get('集荷希望日'),
+      const r = await api('pickup.update', { 案件id: a['案件id'], 集荷希望日: fd.get('集荷希望日'),
         集荷希望時間帯: fd.get('集荷希望時間帯'), 宅配キット種別: fd.get('宅配キット種別') || '' });
-      go('top');
+      if (r['案件']) refreshTopWith({ 案件: r['案件'] }); else { dropPrefetch(); go('top'); }
     } catch (e) {
       err.textContent = e.message; err.hidden = false; btn.disabled = false;
     }
@@ -566,10 +607,10 @@ async function approveCase(案件id, btn) {
   if (!(await askSheet(msg, '承認する'))) return;
   btn.disabled = true;
   try {
-    await api('approve', { 案件id });
+    const r = await api('approve', { 案件id });
     dropStore('me');
     toast('承認しました。お振込みの手続きに進みます');
-    go('top');
+    if (r['案件']) refreshTopWith({ 案件: r['案件'] }); else { dropPrefetch(); go('top'); }
   } catch (e) {
     toast(e.message);
     btn.disabled = false;
@@ -578,7 +619,7 @@ async function approveCase(案件id, btn) {
 
 /* ---------------------------------------------------------------- M-04 / M-05 / M-06 */
 
-/** 撮った写真を送れる大きさにする（長辺2000px の JPEG）。読めない形式はそのまま送る */
+/** 撮った写真を送れる大きさにする（長辺1600px・JPEG 0.8＝免許証の文字が読める最小）。読めない形式はそのまま送る */
 async function imagePayload(file) {
   if (!file) return null;
   const toB64 = blob => new Promise((ok, ng) => {
@@ -589,12 +630,12 @@ async function imagePayload(file) {
   });
   try {
     const bmp = await createImageBitmap(file);
-    const k = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
+    const k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
     const cv = document.createElement('canvas');
     cv.width = Math.round(bmp.width * k);
     cv.height = Math.round(bmp.height * k);
     cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
-    const blob = await new Promise(ok => cv.toBlob(ok, 'image/jpeg', 0.85));
+    const blob = await new Promise(ok => cv.toBlob(ok, 'image/jpeg', 0.8));
     if (blob) return { type: 'image/jpeg', data: await toB64(blob) };
   } catch (e) { /* HEIC など、ブラウザが描けない形式 */ }
   if (file.size > 8 * 1024 * 1024) throw new Error('画像が大きすぎます（8MBまで）');
@@ -671,7 +712,10 @@ function wireBankPicker(form, g) {
 }
 
 async function viewForm2() {
-  const r = await api('form2.get');
+  /* 先に取ってあれば待たずに出す（1回使ったら捨てる＝次は最新を取る） */
+  const pre = state.pre && state.pre.form2;
+  if (state.pre) state.pre.form2 = null;
+  const r = (pre ? await pre : null) || await api('form2.get');
   const k = r['本人確認'] || {}, g = r['口座'] || {};
   /* 要再提出のときは「登録済み」と見せない（撮り直しが要る） */
   const redo = k['確認状況'] === '要再提出';
@@ -716,7 +760,9 @@ async function viewForm2() {
 
   wireBankPicker(form, g);
 
-  /* 撮ったら見た目を変える */
+  /* 撮ったら見た目を変え、その場で裏に送り始める（261022）。電波の悪い所でも、口座を入力しているあいだに送り終わる。
+     送れなかったら（古い GAS・電波切れ）「登録する」のときにまとめて送る */
+  const shots = {};
   form.querySelectorAll('input[type=file]').forEach(inp => {
     inp.addEventListener('change', () => {
       const box = inp.closest('label').querySelector('.shot-box');
@@ -728,6 +774,7 @@ async function viewForm2() {
           box.style.backgroundImage = `url("${URL.createObjectURL(inp.files[0])}")`;
           box.classList.add('has-img');
         } catch (e) { /* 映せないだけ */ }
+        shots[inp.name] = startUpload(inp.name, inp.files[0], box);
       }
     });
   });
@@ -758,11 +805,24 @@ async function viewForm2() {
       });
       ['書類種別', '職業', '年齢', '金融機関名', '支店名', '口座種別', '口座番号', '口座名義カナ']
         .forEach(n => { p[n] = fd.get(n) || ''; });
-      p['表面'] = await imagePayload(form.elements['表面'].files[0]);
-      p['裏面'] = backShot.hidden ? null : await imagePayload(form.elements['裏面'].files[0]);
-      await api('form2.post', p);
+      for (const name of ['表面', '裏面']) {
+        const rec = shots[name];
+        if (!rec || (name === '裏面' && backShot.hidden)) continue;
+        if (!rec.done) btn.textContent = '写真を送っています…';
+        await rec.promise;
+        if (rec.error) throw rec.error;
+        if (rec.url) p[name + 'URL'] = rec.url; else p[name] = rec.payload;
+      }
+      btn.textContent = '送信しています…';
+      const r = await api('form2.post', p);
       ok.hidden = false;
-      setTimeout(() => go('top'), 1200);
+      /* TOP は手元で更新する（取りに行かない） */
+      const k2 = r['本人確認'], g2 = r['口座'];
+      let todo = [];
+      if (!(k2 && k2['表面登録済'])) todo.push('本人確認書類');
+      if (!g2) todo.push('お振込先');
+      if (k2 && k2['確認状況'] === '要再提出') todo = ['本人確認書類（再提出）'].concat(todo.filter(t => t !== '本人確認書類'));
+      setTimeout(() => refreshTopWith({ 本人確認状況: k2 ? k2['確認状況'] : '未登録', 口座登録済: !!g2, 未完了: todo }), 1200);
     } catch (e) {
       err.textContent = e.message; err.hidden = false;
     } finally {
@@ -772,6 +832,41 @@ async function viewForm2() {
     }
   });
   mount(node);
+}
+
+/** 撮った写真を縮めて、その場で GAS へ送る（kyc.upload）。枠の中に「送信中 ○%」「送信済み」を出す。
+ *  戻り値 rec：promise（終わったら解決）・url（送れたときの置き場所）・payload（縮めた画像。送れなかったとき登録と一緒に送る） */
+function startUpload(name, file, box) {
+  const em = box.querySelector('em');
+  let bar = box.querySelector('.up');
+  if (!bar) { bar = document.createElement('span'); bar.className = 'up'; bar.innerHTML = '<i></i>'; box.appendChild(bar); }
+  const fill = bar.firstChild;
+  const rec = { payload: null, url: null, done: false, error: null };
+  rec.promise = (async () => {
+    try {
+      rec.payload = await imagePayload(file);
+    } catch (e) {
+      rec.error = e;
+      em.textContent = e.message;
+      rec.done = true;
+      return;
+    }
+    try {
+      em.textContent = '送信中 0%';
+      fill.style.width = '2%';
+      const r = await api('kyc.upload', { 面: name, 画像: rec.payload }, { quiet: true, noRelogin: true,
+        onProgress: p => { const pct = Math.min(99, Math.round(p * 100)); em.textContent = '送信中 ' + pct + '%'; fill.style.width = pct + '%'; } });
+      rec.url = r.url;
+      em.textContent = '送信済み';
+      fill.style.width = '100%';
+    } catch (e) {
+      /* 古い GAS（kyc.upload が無い）・電波切れ・期限切れ：縮めた画像を持っておき、登録のときに一緒に送る */
+      em.textContent = '撮影しました';
+      fill.style.width = '0';
+    }
+    rec.done = true;
+  })();
+  return rec;
 }
 
 /* ---------------------------------------------------------------- M-03 / M-09 */
@@ -1023,3 +1118,9 @@ boot().catch(e => {
   app.innerHTML = `<div class="card center"><p class="err">${esc(e.message)}</p>
     <button class="btn btn-primary" onclick="location.reload()">やり直す</button></div>`;
 });
+
+/* 261022：画面の部品（app.js・style.css・templates.html・銀行のマスタ・LIFF の SDK）を端末に持つ（sw.js）。
+   2回目からは通信せずに画面が出て、裏で最新に差し替える。電波の悪い所では API の往復だけが待ち時間になる */
+if ('serviceWorker' in navigator && !CFG.DEV_API && location.protocol === 'https:') {
+  navigator.serviceWorker.register('sw.js').catch(() => { /* 使えない端末ではそのまま */ });
+}
