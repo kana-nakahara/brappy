@@ -135,25 +135,15 @@ function newReqId() {
 }
 
 /** 1回送る。使える応答（JSON で、doGet の応答でない）なら返し、そうでなければ null。届かなければ例外。
- *  onProgress があるとき（画像の送信）は XHR で送り、送れた割合を知らせる（電波の悪い所で「進んでいる」と分かるように） */
-async function postOnce(body, onProgress) {
-  const text = JSON.stringify(body);
-  const usable = j => (j && !j.service ? j : null);
-  if (onProgress) {
-    return new Promise((ok, ng) => {
-      const x = new XMLHttpRequest();
-      x.open('POST', CFG.GAS_URL);
-      x.setRequestHeader('Content-Type', 'text/plain;charset=utf-8');
-      x.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
-      x.onload = () => { let j = null; try { j = JSON.parse(x.responseText); } catch (e) { /* 下で null */ } ok(usable(j)); };
-      x.onerror = () => ng(new Error('net'));
-      x.send(text);
-    });
-  }
-  const r = await fetch(CFG.GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: text });
+ *  🔴 XHR の upload.onprogress（送れた割合）は使えない：upload にリスナーを付けると CORS のプリフライト（OPTIONS）が
+ *     飛び、GAS はそれに応えられず net error になる（261022 本番で確認）。進み具合は時間で見せる（startUpload） */
+async function postOnce(body) {
+  const r = await fetch(CFG.GAS_URL, {
+    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body)
+  });
   let j = null;
   try { j = await r.json(); } catch (e) { return null; }
-  return usable(j);
+  return j && !j.service ? j : null;
 }
 
 /** fn() が ms 以内に返らなければ、もう1本出して先に使える応答を返した方を使う（読む操作だけ） */
@@ -204,7 +194,7 @@ async function apiCall(action, payload, opt) {
     for (let i = 0; i < (reads ? 3 : 2) && !j; i++) {
       if (i) await new Promise(ok => setTimeout(ok, 800));
       try {
-        j = reads ? await raceSlow(() => postOnce(body), 4000) : await postOnce(body, opt && opt.onProgress);
+        j = reads ? await raceSlow(() => postOnce(body), 4000) : await postOnce(body);
       } catch (e) {
         netErr = e;
         break;
@@ -852,16 +842,17 @@ function startUpload(name, file, box) {
       return;
     }
     try {
-      em.textContent = '送信中 0%';
-      fill.style.width = '2%';
-      const r = await api('kyc.upload', { 面: name, 画像: rec.payload }, { quiet: true, noRelogin: true,
-        onProgress: p => { const pct = Math.min(99, Math.round(p * 100)); em.textContent = '送信中 ' + pct + '%'; fill.style.width = pct + '%'; } });
+      em.textContent = '送信中…';
+      bar.classList.add('run');
+      const r = await api('kyc.upload', { 面: name, 画像: rec.payload }, { quiet: true, noRelogin: true });
       rec.url = r.url;
       em.textContent = '送信済み';
+      bar.classList.remove('run');
       fill.style.width = '100%';
     } catch (e) {
       /* 古い GAS（kyc.upload が無い）・電波切れ・期限切れ：縮めた画像を持っておき、登録のときに一緒に送る */
       em.textContent = '撮影しました';
+      bar.classList.remove('run');
       fill.style.width = '0';
     }
     rec.done = true;
