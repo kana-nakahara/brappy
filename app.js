@@ -138,9 +138,12 @@ async function apiCall(action, payload, opt) {
     /* 画面確認用プレビューだけで使う（本番の config.js には無い） */
     j = await CFG.DEV_API(body);
   } else {
-    /* 🔴 GAS はまれに JSON でない応答（エラーのページ）を返す。読むだけの操作は1回だけ取り直す
-          （261019 撮影：承認の直後にマイページを開き直す呼び出しが1回だけこうなった） */
-    for (let i = 0; i < (READ_ONLY_ACTIONS.indexOf(action) >= 0 ? 2 : 1) && !j; i++) {
+    /* 🔴 GAS はまれに JSON でない応答（エラーのページ）や、POST なのに doGet の応答（{ ok, service }）を返す。
+          doGet の応答は ok:true なので、そのまま受けると「成功」に見えて画面が落ちる・書いていないのに完了と出る
+          （261022 実測：36 回中 4 回、どれも 10 秒以上かかった回）。読むだけの操作は取り直す */
+    const reads = READ_ONLY_ACTIONS.indexOf(action) >= 0;
+    let stray = false;
+    for (let i = 0; i < (reads ? 3 : 1) && !j; i++) {
       if (i) await new Promise(ok => setTimeout(ok, 800));
       let r;
       try {
@@ -151,6 +154,11 @@ async function apiCall(action, payload, opt) {
         throw new Error('通信できませんでした。電波の良いところでお試しください');
       }
       try { j = await r.json(); } catch (e) { /* 下で扱う */ }
+      if (j && j.service) { j = null; stray = true; }
+    }
+    /* 書く操作は、届いたかどうかが分からないので取り直さない（二重の申込になりうる） */
+    if (!j && stray && !reads) {
+      throw new Error('通信が混み合っていました。お手数ですが、画面を開き直して反映されているかご確認ください');
     }
   }
   if (!j) throw new Error('エラーが発生しました');
