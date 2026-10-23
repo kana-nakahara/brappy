@@ -7,16 +7,19 @@
 const CFG = window.BRAPPY || {};
 const PAGE = document.body.dataset.page;
 
-const FLOW = ['申込', 'キット発送', 'キット到達', '集荷', '査定中', '承認待ち', '振込待ち', '入金済み'];
-/* フロー帯の見出しは短くする（幅が狭いため） */
+const FLOW = ['申込', 'キット発送', 'キット到達', '受取', '査定中', '承認待ち', '振込待ち', '入金済み'];
+/* フロー帯の見出しは短くする（幅が狭いため）。
+   261022 FB：お客様にとってキットが届いたあとは「集荷」（到達ではない）、ブラッピーに届いたら「受取」 */
 const FLOW_LABEL = {
-  '申込': '申込済', 'キット発送': 'キット', 'キット到達': '到達', '集荷': '集荷',
+  '申込': '申込済', 'キット発送': 'キット', 'キット到達': '集荷', '受取': '受取',
   '査定中': '査定', '承認待ち': '承認', '振込待ち': '振込', '入金済み': '完了'
 };
 
 /* お客様に見せるステータスの言い方。「申込」のままだとボタンに見えるので、済んだことと分かる語にする */
-const STATUS_LABEL = { '申込': '申込済' };
-const statusLabel = s => STATUS_LABEL[s] || s || '';
+const STATUS_LABEL = { '申込': '申込済', 'キット到達': '集荷待ち', '受取': 'ブラッピー受取' };
+/* 261022 より前の GAS は「集荷」を返す（画面の控えと GAS の版がずれる間だけ） */
+const normStatus = s => s === '集荷' ? '受取' : s;
+const statusLabel = s => STATUS_LABEL[normStatus(s)] || s || '';
 
 const app = document.getElementById('app');
 const tabbar = document.getElementById('tabbar');
@@ -336,6 +339,10 @@ async function boot() {
   if (PAGE === 'apply') return viewApply(tpl);
 
   await Promise.all([tpl, initLiff(CFG.LIFF_MYPAGE, true)]);
+  /* 261022 FB：本人確認の通知のカード（?view=form2）からは、マイページの TOP でなく登録画面を直接開く。
+     登録画面のデータは boot と同時に取りに行く（往復を重ねない） */
+  const want = wantedView();
+  if (want === 'form2') state.pre = { form2: api('form2.get', null, { quiet: true, noRelogin: true }).catch(() => null) };
   /* 🔴 261021：取引の状況は端末の写しから出さない。前回の内容を先に出すと、古い状況が数秒見えてから差し替わった
         （リッチメニューから開くたび）。最新が届くまで index.html の枠（.skel）のままにする。古い写しは捨てる */
   dropStore('me');
@@ -357,7 +364,21 @@ async function boot() {
   }
   showChrome(true);
   state.prefetchedMe = me;
+  if (want === 'form2') {
+    state.me = me;
+    state.prefetchedMe = null;
+    try { history.replaceState(null, '', location.pathname); } catch (e) { /* 戻せないだけ */ }
+    return go('form2');
+  }
   go('top');
+}
+
+/** LIFF の URL に付けた ?view=…（LIFF は最初 liff.state に包んで渡し、init のあと素の ? に戻す） */
+function wantedView() {
+  const q = new URLSearchParams(location.search);
+  if (q.get('view')) return q.get('view');
+  const st = q.get('liff.state');
+  return st ? new URLSearchParams(st.replace(/^[^?]*\?/, '')).get('view') : null;
 }
 
 /* TOP を出したあと、次に開きそうな画面（登録）のデータを裏で先に取っておく（開いた瞬間に出す）。
@@ -399,11 +420,51 @@ function wireLineChat(node) {
   });
 }
 
-/* 申込フォームへのリンク。LINE の中でも外でも LIFF の URL で開く（LINE ユーザーIDを紐づけるため） */
+/* 申込フォームへのリンク。LINE の中でも外でも LIFF の URL で開く（LINE ユーザーIDを紐づけるため）。
+   261022 FB：マイページの「新しく申し込む」は、マイページを閉じて「カンタン査定」をタップしたときと同じにする
+   （トークに「商品の写真を送ってください」＋カメラ／写真のボタンが届く。写真を見てからフォームを送る流れに揃える） */
 function wireApplyLinks(node) {
+  if (PAGE === 'mypage') {
+    node.querySelectorAll('[data-apply-link]').forEach(a => a.addEventListener('click', ev => {
+      ev.preventDefault();
+      startKantan(a);
+    }));
+    return;
+  }
   if (!CFG.LIFF_APPLY || CFG.DEV_API) return;
   node.querySelectorAll('[data-apply-link]').forEach(a => { a.href = 'https://liff.line.me/' + CFG.LIFF_APPLY; });
 }
+
+async function startKantan(a) {
+  if (a.dataset.busy) return;
+  a.dataset.busy = '1';
+  try {
+    await api('kantan.start');
+    toast('LINE のトークに「商品の写真を送ってください」をお送りしました');
+    if (window.liff && liff.isInClient && liff.isInClient()) setTimeout(() => liff.closeWindow(), 900);
+    else if (CFG.OA_ID) setTimeout(() => { location.href = 'https://line.me/R/oaMessage/' + encodeURIComponent(CFG.OA_ID) + '/'; }, 900);
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    delete a.dataset.busy;
+  }
+}
+
+/* 261022 FB：入力中（キーボード・選択肢が出ている間）は「この内容で申し込む」等の下の固定ボタンを浮かせない
+   （キーボードの上に乗って入力欄を隠していた）。入力欄から離れたら戻す */
+(function keyboardCta() {
+  const typing = el => el && el.matches && el.matches('input:not([type=file]):not([type=checkbox]):not([type=radio]):not([type=hidden]), select, textarea');
+  let t = null;
+  document.addEventListener('focusin', ev => {
+    if (!typing(ev.target)) return;
+    clearTimeout(t);
+    document.body.classList.add('kb');
+  });
+  document.addEventListener('focusout', () => {
+    clearTimeout(t);
+    t = setTimeout(() => { if (!typing(document.activeElement)) document.body.classList.remove('kb'); }, 250);
+  });
+})();
 
 /* 入力の揺れを寄せる：全角英数→半角、ひらがな→カタカナ（カナ欄） */
 const nfkc = s => String(s || '').normalize('NFKC').trim();
@@ -479,7 +540,7 @@ async function viewTop() {
     '買取金額表示': yen(a['買取金額']),
     '承認できる': a['案件ステータス'] === '承認待ち',
     '客向けコメント': a['客向けコメント'] || '',
-    '変更できる': PICKUP_EDITABLE.indexOf(a['案件ステータス']) >= 0,
+    '変更できる': a['変更可'] !== undefined ? !!a['変更可'] : PICKUP_EDITABLE.indexOf(a['案件ステータス']) >= 0,
     '本人確認表示': (KYC_LABEL[me['本人確認状況']] || [me['本人確認状況']])[0],
     '口座表示': me['口座登録済'] ? '登録済み' : '未登録'
   });
@@ -514,7 +575,7 @@ async function viewTop() {
 async function viewPickup() {
   const r = await api('form2.get');
   const a = r['案件'];
-  if (!a || PICKUP_EDITABLE.indexOf(a['案件ステータス']) < 0) return go('top');
+  if (!a || (a['変更可'] !== undefined ? !a['変更可'] : PICKUP_EDITABLE.indexOf(a['案件ステータス']) < 0)) return go('top');
   const kitOk = a['案件ステータス'] === '申込';
   const node = render('tpl-pickup', { '受付番号': a['受付番号'], 'キット変更可': kitOk, 'キット変更不可': !kitOk });
   const form = node.querySelector('#formPickup');
@@ -548,7 +609,7 @@ async function viewPickup() {
 
 function paintFlow(ol, status) {
   if (!ol) return;
-  const i = FLOW.indexOf(status);
+  const i = FLOW.indexOf(normStatus(status));
   ol.innerHTML = FLOW.map((s, n) => {
     const cls = n < i ? 'done' : (n === i ? 'now' : '');
     return `<li class="${cls}">${esc(FLOW_LABEL[s])}</li>`;
@@ -795,6 +856,7 @@ async function viewForm2() {
       });
       ['書類種別', '職業', '年齢', '金融機関名', '支店名', '口座種別', '口座番号', '口座名義カナ']
         .forEach(n => { p[n] = fd.get(n) || ''; });
+      if (!checkForm2(form, p, shots, k, g, redo, backShot.hidden)) throw new Error('入力されていない項目があります。赤字の欄をご確認ください');
       for (const name of ['表面', '裏面']) {
         const rec = shots[name];
         if (!rec || (name === '裏面' && backShot.hidden)) continue;
@@ -822,6 +884,40 @@ async function viewForm2() {
     }
   });
   mount(node);
+}
+
+/** 登録画面の必須チェック（261022 FB）。GAS の form2Post_ と同じ決まり：
+ *  はじめて・撮り直しでは 書類の種類・表面・裏面（種類による）・ご職業・年齢、お振込先が無ければ口座の全項目。
+ *  登録済みの方が一部だけ直すのは受ける。欄の下に赤字を出し、最初の欄へ移る */
+function checkForm2(form, p, shots, k, g, redo, noBack) {
+  const errs = [];
+  const mark = (el, msg) => { fieldError(el, msg); if (msg) errs.push(el); };
+  const shotErr = (name, msg) => {
+    const box = form.querySelector('[name=' + name + ']').closest('label').querySelector('.shot-box');
+    box.classList.toggle('invalid', !!msg);
+    let e = box.parentElement.querySelector('.field-err');
+    if (!msg) { if (e) e.remove(); return; }
+    if (!e) { e = document.createElement('p'); e.className = 'field-err'; box.parentElement.appendChild(e); }
+    e.textContent = msg;
+    errs.push(box);
+  };
+  const needKyc = !k['表面登録済'] || redo;
+  const has = name => !!shots[name] || (!redo && !!k[name + '登録済']);
+  mark(form.elements['書類種別'], needKyc && !p['書類種別'] ? '書類の種類をお選びください' : '');
+  shotErr('表面', needKyc && !has('表面') ? '表面を撮影してください' : '');
+  shotErr('裏面', needKyc && !noBack && !has('裏面') ? '裏面を撮影してください' : '');
+  mark(form.elements['職業'], needKyc && !p['職業'] ? 'ご職業をお選びください' : '');
+  mark(form.elements['年齢'], needKyc && !p['年齢'] ? '年齢をご入力ください'
+    : (p['年齢'] && !/^\d{1,3}$/.test(nfkc(p['年齢'])) ? '年齢は数字でご入力ください' : ''));
+  const needBank = !g['金融機関名'];
+  const bankQ = n => form.querySelector('[data-pick=' + n + '] [data-pick-q]');
+  mark(bankQ('bank'), needBank && !p['金融機関名'] ? '銀行をお選びください' : '');
+  mark(bankQ('branch'), needBank && !p['支店名'] ? '支店をお選びください' : '');
+  mark(form.elements['口座種別'], needBank && !p['口座種別'] ? '種別をお選びください' : '');
+  mark(form.elements['口座番号'], needBank && !p['口座番号'] ? '口座番号をご入力ください' : '');
+  mark(form.elements['口座名義カナ'], needBank && !p['口座名義カナ'] ? '口座名義（カナ）をご入力ください' : '');
+  if (errs.length) errs[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+  return errs.length === 0;
 }
 
 /** 撮った写真を縮めて、その場で GAS へ送る（kyc.upload）。枠の中に「送信中 ○%」「送信済み」を出す。

@@ -148,7 +148,8 @@
     <form id="formForm2" class="form">
 
       <h2 class="t2">1. 本人確認書類</h2>
-      <label>書類の種類
+      <p class="note"><span class="req">必須</span> の項目をすべてご入力ください。</p>
+      <label>書類の種類 <span class="req">必須</span>
         <select name="書類種別" data-master="書類種別"></select>
       </label>
       <div class="shots">
@@ -166,10 +167,10 @@
         <span data-front-only hidden>この書類は表面（顔写真のある面）のみお送りください。</span>
       </p>
       <div class="row">
-        <label>ご職業
+        <label>ご職業 <span class="req">必須</span>
           <select name="職業" data-master="職業"></select>
         </label>
-        <label>年齢
+        <label>年齢 <span class="req">必須</span>
           <input name="年齢" inputmode="numeric" placeholder="42">
         </label>
       </div>
@@ -177,28 +178,28 @@
       <h2 class="t2">2. お振込先</h2>
       <p class="note">お客様<b>ご本人名義</b>の口座をご登録ください。</p>
       <div class="pick" data-pick="bank">
-        <label>銀行名
+        <label>銀行名 <span class="req">必須</span>
           <input type="search" data-pick-q placeholder="銀行名で検索（例：みずほ）" autocomplete="off" enterkeyhint="search">
         </label>
         <ul class="pick-list" data-pick-list hidden></ul>
         <input type="hidden" name="金融機関名">
       </div>
       <div class="pick" data-pick="branch">
-        <label>支店名
+        <label>支店名 <span class="req">必須</span>
           <input type="search" data-pick-q placeholder="先に銀行をお選びください" autocomplete="off" enterkeyhint="search" disabled>
         </label>
         <ul class="pick-list" data-pick-list hidden></ul>
         <input type="hidden" name="支店名">
       </div>
       <div class="row">
-        <label>種別
+        <label>種別 <span class="req">必須</span>
           <select name="口座種別" data-master="口座種別"></select>
         </label>
-        <label>口座番号
+        <label>口座番号 <span class="req">必須</span>
           <input name="口座番号" inputmode="numeric" placeholder="1234567">
         </label>
       </div>
-      <label>口座名義（カナ）
+      <label>口座名義（カナ） <span class="req">必須</span>
         <input name="口座名義カナ" placeholder="ヤマダ タロウ">
       </label>
 
@@ -273,7 +274,9 @@
                placeholder="例）09012345678" required>
       </label>
 
-      <h2 class="t2">ご住所（集荷先） <i class="req">必須</i></h2>
+      <!-- 261022 FB：フォームの住所＝宅配キットのお届け先。集荷はご本人の住所（本人確認書類の住所）へ伺う -->
+      <h2 class="t2">ご住所（宅配キットのお届け先） <i class="req">必須</i></h2>
+      <p class="note">お品物の集荷は、本人確認書類に記載のご住所へ伺います。</p>
       <div class="row">
         <label style="flex:1.1">〒
           <input name="郵便番号" inputmode="numeric" autocomplete="postal-code"

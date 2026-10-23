@@ -42,12 +42,12 @@ a{color:inherit}
   -webkit-backdrop-filter:saturate(180%) blur(16px); backdrop-filter:saturate(180%) blur(16px);
   border-bottom:1px solid rgba(214,42,54,.08);
 }
-/* ロゴ「Brappy」：赤いハート型の B（アセットのロゴの簡易版。本番のロゴ画像が来たらここを差し替える） */
-.hd-logo{display:inline-flex; align-items:center; gap:6px; font-weight:800; font-size:19px;
-  letter-spacing:.02em; line-height:1; color:var(--red)}
-.hd-logo::before{content:""; width:22px; height:22px; flex:none; background:no-repeat center/contain
+/* ロゴ「Brappy」：261022 差し替え（アセット差し替えのロゴ。logo.png＝高さ 96px の透過 PNG）。文字は読み上げ用に残し、見た目は画像 */
+.hd-logo{display:inline-block; width:95px; height:30px; flex:none; overflow:hidden; white-space:nowrap;
+  text-indent:120%; color:transparent; background:no-repeat left center/contain url("logo.png")}
+.hd-logo-old::before{content:""; width:22px; height:22px; flex:none; background:no-repeat center/contain
   url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23d62a36' d='M12 21.5l-1.3-1.2C5.6 15.7 2.5 12.9 2.5 9.3 2.5 6.4 4.8 4 7.7 4c1.7 0 3.3.8 4.3 2.1C13 4.8 14.6 4 16.3 4c2.9 0 5.2 2.4 5.2 5.3 0 3.6-3.1 6.4-8.2 11z'/%3E%3Cpath fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' d='M9.5 8.2v8h3a2 2 0 0 0 0-4h-3m0 0h2.6a2 2 0 0 0 0-4H9.5'/%3E%3C/svg%3E")}
-button.hd-logo{background:none; border:0; padding:4px 0; color:inherit}
+button.hd-logo{background-color:transparent; border:0; padding:0; color:transparent}
 .hd-out{background:var(--card); border:1px solid var(--line); color:var(--sub);
   border-radius:999px; padding:5px 14px; font-size:12px}
 
@@ -131,6 +131,12 @@ button.hd-logo{background:none; border:0; padding:4px 0; color:inherit}
 /* 送信ボタンは画面の下に貼りつけておく（長いフォームでも押す場所が見える） */
 .cta{position:sticky; bottom:calc(10px + env(safe-area-inset-bottom)); z-index:5; margin-top:18px}
 body[data-page="mypage"] .cta{bottom:calc(var(--tab-h) + 10px + env(safe-area-inset-bottom))}
+/* 入力中（キーボード・選択肢が出ている間）は浮かせない（261022 FB：キーボードの上に乗って入力欄を隠していた） */
+body.kb .cta, body[data-page="mypage"].kb .cta{position:static}
+body.kb .tabbar{display:none}
+/* 必須の撮影枠・古物商の表示（261022 FB） */
+.shot-box.invalid{outline:2px solid var(--red); outline-offset:2px}
+.kobutsu{font-size:10.5px; color:var(--mute); text-align:center; line-height:1.7; margin:4px 6px 18px}
 .cta .btn{margin-top:0}
 
 /* ---- 挨拶 ---- */

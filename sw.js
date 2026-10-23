@@ -7,7 +7,7 @@
  * 🔴 画面と GAS を同時に変えるときは、1回前の画面が新しい GAS でも動くようにしておく（控えが1回分古いことがある）。
  */
 'use strict';
-const VERSION = 'brappy-v1';
+const VERSION = 'brappy-v2';   /* 261023 ロゴ・フロー帯の言い方・必須チェック */
 const SELF = self.location.origin;
 const ASSET = /\.(js|css|html|json|png|jpg|webp|svg|woff2?)$/;
 const SDK = 'https://static.line-scdn.net';
