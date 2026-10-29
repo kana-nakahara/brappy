@@ -1042,10 +1042,11 @@ async function viewApply(tpl) {
 
   /* 2回目以降：前回のお名前・ご住所を入れておく（変わっていれば直してもらう）。
      後から届いたときは、お客様がもう打ち始めた欄は上書きしない */
+  const PREV_FIELDS = ['顧客名', '顧客名カナ', '電話番号', '郵便番号', '都道府県', '住所1', '住所2'];
   const fillPrev = pv => {
     if (!pv || !Object.keys(pv).length) return;
     let filled = false;
-    ['顧客名', '顧客名カナ', '電話番号', '郵便番号', '都道府県', '住所1', '住所2'].forEach(n => {
+    PREV_FIELDS.forEach(n => {
       if (pv[n] && F(n) && !F(n).value) { F(n).value = pv[n]; filled = true; }
     });
     if (filled && !form.querySelector('.prefill')) {
@@ -1071,7 +1072,17 @@ async function viewApply(tpl) {
     form.insertBefore(note, form.firstChild);
   }
   fillPrev(prev);
-  prevP.then(fillPrev);
+  /* 写し（端末に1日残る）で入れたあと、サーバーが「前回なし」と返したら写しの分を空に戻す
+     （スタッフがお客様を消した・LINE の紐づけを外した＝261029。別の人の名前が残ったまま申し込まれないように） */
+  prevP.then(pv => {
+    if (pv && !Object.keys(pv).length && prev && Object.keys(prev).length) {
+      PREV_FIELDS.forEach(n => { if (F(n) && prev[n] && F(n).value === prev[n]) F(n).value = ''; });
+      const note = !draft && form.querySelector('.prefill');
+      if (note) note.remove();
+      return;
+    }
+    fillPrev(pv);
+  });
 
   /* 集荷希望日は翌々日を既定に、過去日は選べないようにする（日本時間で数える） */
   const dt = F('集荷希望日');
