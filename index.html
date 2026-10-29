@@ -30,7 +30,7 @@
 <main id="app" class="wrap">
   <!-- 開いた瞬間に出すトップの枠（スピナーで真っ白にしない）。見出し・項目名は固定、お客様ごとの値は灰色の仮表示。
        データが届いたら app.js が tpl-top で描き直す。項目を変えたら templates.html の tpl-top と揃える -->
-  <div class="skel" aria-busy="true" aria-label="読み込み中">
+  <div class="skel" data-skel="top" aria-busy="true" aria-label="読み込み中">
     <section class="greet">
       <div class="greet-name"><span class="sk" style="width:6em;height:1em"></span> さま</div>
       <div class="greet-sub">LINEアカウントでログイン中</div>
@@ -65,7 +65,37 @@
     <a class="btn btn-line" href="#" tabindex="-1">LINEでスタッフに相談する</a>
     <p class="fine">ご住所・お電話番号の変更は、LINEのトークからスタッフへご連絡ください。</p>
   </div>
+  <!-- 登録画面を直接開く URL（?view=form2）のときの枠（261029：TOP の枠が先に見えて「ホームを経由している」と見えた）。
+       見出し・項目名は templates.html の tpl-form2 と揃える -->
+  <div class="skel" data-skel="form2" aria-busy="true" aria-label="読み込み中" hidden>
+    <section class="card">
+      <h1 class="t1">本人確認・お振込先の登録</h1>
+      <p class="lead">ご登録がないと査定額をお振込みできません。お手数ですがご登録をお願いします。</p>
+      <div class="form">
+        <h2 class="t2">1. 本人確認書類</h2>
+        <label>書類の種類 <span class="req">必須</span><span class="sk" style="display:block;width:100%;height:46px;margin-top:6px"></span></label>
+        <div class="shots">
+          <span class="shot"><span class="shot-box"><b>表面</b><em>撮影する</em></span></span>
+          <span class="shot"><span class="shot-box"><b>裏面</b><em>撮影する</em></span></span>
+        </div>
+        <div class="row">
+          <label>ご職業 <span class="req">必須</span><span class="sk" style="display:block;width:100%;height:46px;margin-top:6px"></span></label>
+          <label>年齢 <span class="req">必須</span><span class="sk" style="display:block;width:100%;height:46px;margin-top:6px"></span></label>
+        </div>
+        <h2 class="t2">2. お振込先</h2>
+        <label>銀行名 <span class="req">必須</span><span class="sk" style="display:block;width:100%;height:46px;margin-top:6px"></span></label>
+      </div>
+    </section>
+  </div>
 </main>
+<script>
+  /* ?view=form2（LIFF は最初 liff.state=%3Fview%3Dform2 に包む）なら、TOP の枠でなく登録画面の枠を出す */
+  (function () {
+    if (!/view(=|%3D)form2/i.test(location.search)) return;
+    var top = document.querySelector('.skel[data-skel=top]'), f2 = document.querySelector('.skel[data-skel=form2]');
+    if (top && f2) { top.remove(); f2.hidden = false; }
+  })();
+</script>
 <p class="kobutsu">古物商許可　東京都公安委員会 第301062416398号<br>株式会社楽楽</p>
 
 <nav class="tabbar" id="tabbar" hidden>
