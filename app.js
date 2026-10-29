@@ -836,6 +836,17 @@ async function viewForm2() {
       <span class="amt">${p['概算額'] ? '概算 ' + yen(p['概算額']) : ''}</span></li>`).join('')
     || '<li class="empty">お品物がありません</li>';
 
+  /* 一度「登録する」で赤字を出したあとは、入れた欄から赤字を消す（261029：入れ直しても赤字が残っていた）。
+     銀行・支店は一覧のボタンで選ぶので click でも見直す（選んだ処理のあとに見るため setTimeout） */
+  let tried = false;
+  const values = () => {
+    const fd = new FormData(form), v = {};
+    ['書類種別', '職業', '年齢', '金融機関名', '支店名', '口座種別', '口座番号', '口座名義カナ'].forEach(n => { v[n] = fd.get(n) || ''; });
+    return v;
+  };
+  const recheck = () => { if (tried) checkForm2(form, values(), shots, k, g, redo, backShot.hidden, true); };
+  ['change', 'input', 'click'].forEach(t => form.addEventListener(t, () => setTimeout(recheck, 0)));
+
   const err = node.querySelector('#form2Err'), ok = node.querySelector('#form2Ok');
   form.addEventListener('submit', async ev => {
     ev.preventDefault();
@@ -846,16 +857,14 @@ async function viewForm2() {
     btn.textContent = '送信しています…';
     busy(true);   /* 写真を縮める間も（通信の前から）かぶせる */
     try {
-      const fd = new FormData(form);
-      const p = {};
+      const p = values();
       /* 検索欄に打っただけで一覧から選んでいない銀行・支店は送らない */
       form.querySelectorAll('[data-pick]').forEach(pk => {
         if (pk.querySelector('[data-pick-q]').value.trim() && !pk.querySelector('input[type=hidden]').value) {
           throw new Error((pk.dataset.pick === 'bank' ? '銀行' : '支店') + 'は一覧からお選びください');
         }
       });
-      ['書類種別', '職業', '年齢', '金融機関名', '支店名', '口座種別', '口座番号', '口座名義カナ']
-        .forEach(n => { p[n] = fd.get(n) || ''; });
+      tried = true;
       if (!checkForm2(form, p, shots, k, g, redo, backShot.hidden)) throw new Error('入力されていない項目があります。赤字の欄をご確認ください');
       for (const name of ['表面', '裏面']) {
         const rec = shots[name];
@@ -889,7 +898,7 @@ async function viewForm2() {
 /** 登録画面の必須チェック（261022 FB）。GAS の form2Post_ と同じ決まり：
  *  はじめて・撮り直しでは 書類の種類・表面・裏面（種類による）・ご職業・年齢、お振込先が無ければ口座の全項目。
  *  登録済みの方が一部だけ直すのは受ける。欄の下に赤字を出し、最初の欄へ移る */
-function checkForm2(form, p, shots, k, g, redo, noBack) {
+function checkForm2(form, p, shots, k, g, redo, noBack, quiet) {
   const errs = [];
   const mark = (el, msg) => { fieldError(el, msg); if (msg) errs.push(el); };
   const shotErr = (name, msg) => {
@@ -916,7 +925,7 @@ function checkForm2(form, p, shots, k, g, redo, noBack) {
   mark(form.elements['口座種別'], needBank && !p['口座種別'] ? '種別をお選びください' : '');
   mark(form.elements['口座番号'], needBank && !p['口座番号'] ? '口座番号をご入力ください' : '');
   mark(form.elements['口座名義カナ'], needBank && !p['口座名義カナ'] ? '口座名義（カナ）をご入力ください' : '');
-  if (errs.length) errs[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (errs.length && !quiet) errs[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
   return errs.length === 0;
 }
 

@@ -7,7 +7,7 @@
  * 🔴 画面と GAS を同時に変えるときは、1回前の画面が新しい GAS でも動くようにしておく（控えが1回分古いことがある）。
  */
 'use strict';
-const VERSION = 'brappy-v4';   /* 261029 納品のロゴ（B のマーク）：ヘッダー・ファビコン */
+const VERSION = 'brappy-v5';   /* 261029 登録画面：入れた欄から赤字を消す */
 const SELF = self.location.origin;
 const ASSET = /\.(js|css|html|json|png|jpg|webp|svg|woff2?)$/;
 const SDK = 'https://static.line-scdn.net';
