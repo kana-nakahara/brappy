@@ -1007,7 +1007,7 @@ async function viewApply(tpl) {
   const [init, line] = await Promise.all([cachedInit || initP, initLiff(CFG.LIFF_APPLY, false), tpl]);
   const prev = line ? loadStore('prev') : null;
   const prevP = line
-    ? api('apply.init', null, { quiet: true }).then(j => { saveStore('prev', j['前回'] || {}); return j['前回']; }).catch(() => null)
+    ? api('apply.init', null, { quiet: true }).then(j => { const pv = j['前回'] || {}; saveStore('prev', pv); return pv; }).catch(() => null)
     : Promise.resolve(null);
 
   const node = render('tpl-apply', {
