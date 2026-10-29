@@ -876,14 +876,15 @@ async function viewForm2() {
       }
       btn.textContent = '送信しています…';
       const r = await api('form2.post', p);
-      ok.hidden = false;
-      /* TOP は手元で更新する（取りに行かない） */
+      /* TOP は手元で更新する（取りに行かない）。🔴 すぐ切り替える（261029：1.2 秒待ってから切り替えていたので、
+         かぶせが消えたあと登録画面が 1 秒ほど残って見えた）。お礼は TOP の上にお知らせで出す */
       const k2 = r['本人確認'], g2 = r['口座'];
       let todo = [];
       if (!(k2 && k2['表面登録済'])) todo.push('本人確認書類');
       if (!g2) todo.push('お振込先');
       if (k2 && k2['確認状況'] === '要再提出') todo = ['本人確認書類（再提出）'].concat(todo.filter(t => t !== '本人確認書類'));
-      setTimeout(() => refreshTopWith({ 本人確認状況: k2 ? k2['確認状況'] : '未登録', 口座登録済: !!g2, 未完了: todo }), 1200);
+      refreshTopWith({ 本人確認状況: k2 ? k2['確認状況'] : '未登録', 口座登録済: !!g2, 未完了: todo });
+      toast('ご登録ありがとうございました');
     } catch (e) {
       err.textContent = e.message; err.hidden = false;
     } finally {
