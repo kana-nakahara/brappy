@@ -7,7 +7,7 @@
  * 🔴 画面と GAS を同時に変えるときは、1回前の画面が新しい GAS でも動くようにしておく（控えが1回分古いことがある）。
  */
 'use strict';
-const VERSION = 'brappy-v7';   /* 261029 登録のあとすぐ TOP へ（1.2 秒待たない） */
+const VERSION = 'brappy-v8';   /* 261030 フォーム1を既定で先に描く（apply.init・LIFF を待たない） */
 const SELF = self.location.origin;
 const ASSET = /\.(js|css|html|json|png|jpg|webp|svg|woff2?)$/;
 const SDK = 'https://static.line-scdn.net';

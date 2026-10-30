@@ -33,6 +33,15 @@ const READ_ONLY_ACTIONS = ['apply.init', 'zip', 'state', 'boot', 'me', 'cases', 
 /* フォーム1で送る欄（ログインし直すときの控えにも使う） */
 const APPLY_FIELDS = ['顧客名', '顧客名カナ', '電話番号', '郵便番号', '都道府県', '住所1', '住所2',
   '宅配キット種別', '集荷希望日', '集荷希望時間帯', '同意'];
+/* フォーム1を開いた瞬間に描くための既定（setup.js の DEFAULT_KITS・集荷時間帯・CONSENT_ITEMS と同じ）。
+   サーバーの apply.init が違う値を返したら差し替える（261030） */
+const APPLY_INIT_DEFAULT = {
+  'キット': [{ '宅配キット': '箱S', '目安点数': 3 }, { '宅配キット': '箱M', '目安点数': 10 }, { '宅配キット': '箱L', '目安点数': 20 }],
+  '時間帯': ['午前', '12-14', '14-16', '16-18', '18-20'],
+  '同意事項': ['利用規約・プライバシーポリシーに同意します', 'LINEアカウントを本人確認（2回目以降）に用いることに同意します', 'LINEアカウントを第三者に使用させません'],
+  '規約url': 'https://line.brappy.jp/terms.html',
+  'プライバシーurl': 'https://line.brappy.jp/privacy.html',
+};
 
 /* ---------------------------------------------------------------- util */
 const yen = n => (n === null || n === undefined) ? '—' : Number(n).toLocaleString('ja-JP') + '円';
@@ -1010,45 +1019,53 @@ async function viewApply(tpl) {
      - キット・時間帯・同意事項は誰にでも同じ。LIFF を待たずに IDトークンなしで取りにいく（LINE への問い合わせもしない）
      - 前回の入力（2回目のお客様）は LIFF の後に IDトークンつきで取り、来たら空欄だけ埋める
      どちらも端末の写しがあればすぐ出し、最新は裏で取って次回に使う */
+  /* 261030（公開前日）：初めて開く人は apply.init（本番で 2〜3 秒）と LIFF（0.5〜1 秒）を待ってから描いていた。
+     キット・時間帯・同意事項は決まった既定（APPLY_INIT_DEFAULT＝setup.js の既定と同じ）で先に描き、
+     サーバーの値が違うときだけ差し替える（お客様がもう選んだ欄は残す）。紐づけの文と前回の入力は LIFF が済んでから足す */
   const cachedInit = loadStore('init', true);
-  const initP = api('apply.init', null, { quiet: !!cachedInit })   /* ここではまだ idToken が無い */
+  const initP = api('apply.init', null, { quiet: true })   /* ここではまだ idToken が無い */
     .then(j => { saveStore('init', j, true); return j; });
-  if (cachedInit) initP.catch(() => {});
-  const [init, line] = await Promise.all([cachedInit || initP, initLiff(CFG.LIFF_APPLY, false), tpl]);
-  const prev = line ? loadStore('prev') : null;
-  const prevP = line
-    ? api('apply.init', null, { quiet: true }).then(j => { const pv = j['前回'] || {}; saveStore('prev', pv); return pv; }).catch(() => null)
-    : Promise.resolve(null);
+  initP.catch(() => {});
+  await tpl;
+  let init = cachedInit || APPLY_INIT_DEFAULT;
+  let line = false;
 
-  const node = render('tpl-apply', {
-    '入口説明': line
-      ? 'LINEアカウントと紐づけてお申し込みします。ID・パスワードは必要ありません。'
-      : 'ID・パスワードは必要ありません。約2分で完了します。'
-  });
+  const node = render('tpl-apply', { '入口説明': 'ID・パスワードは必要ありません。約2分で完了します。' });
+  const form = node.querySelector('#formApply');
+  const err = node.querySelector('#applyErr');
+  const F = n => form.elements[n];
 
-  /* 宅配キット（M1 の3択カード） */
-  node.querySelector('[data-kits]').innerHTML = (init['キット'] || []).map((k, i) => `
+  const paintInit = j => {
+    /* 宅配キット（M1 の3択カード）。描き直すときは選んであるものを守る */
+    const kitSel = F('宅配キット種別') ? F('宅配キット種別').value : '';
+    form.querySelector('[data-kits]').innerHTML = (j['キット'] || []).map((k, i) => `
     <label>
-      <input type="radio" name="宅配キット種別" value="${esc(k['宅配キット'])}" ${i === 1 ? 'checked' : ''} required>
+      <input type="radio" name="宅配キット種別" value="${esc(k['宅配キット'])}" ${(kitSel ? k['宅配キット'] === kitSel : i === 1) ? 'checked' : ''} required>
       <span class="kb"><b>${esc(k['宅配キット'])}</b>
         <em>${k['目安点数'] ? '〜' + k['目安点数'] + '点' : ''}</em></span>
     </label>`).join('');
 
-  /* 時間帯 */
-  node.querySelector('[name=集荷希望時間帯]').innerHTML =
-    '<option value="">選択</option>' +
-    (init['時間帯'] || []).map(v => `<option value="${esc(v)}">${esc(slotLabel(v))}</option>`).join('');
+    /* 時間帯 */
+    const slot = form.querySelector('[name=集荷希望時間帯]');
+    const slotSel = slot.value;
+    slot.innerHTML = '<option value="">選択</option>' +
+      (j['時間帯'] || []).map(v => `<option value="${esc(v)}">${esc(slotLabel(v))}</option>`).join('');
+    if (slotSel) slot.value = slotSel;
 
-  /* 同意事項（F-05） */
-  node.querySelector('[data-consent]').innerHTML = (init['同意事項'] || []).map((t, i) =>
-    `<li>${i === 0
-      ? `<a href="${esc(init['規約url'])}" target="_blank" rel="noopener">利用規約</a>・` +
-        `<a href="${esc(init['プライバシーurl'])}" target="_blank" rel="noopener">プライバシーポリシー</a>に同意します`
-      : esc(t)}</li>`).join('');
-
-  const form = node.querySelector('#formApply');
-  const err = node.querySelector('#applyErr');
-  const F = n => form.elements[n];
+    /* 同意事項（F-05） */
+    form.querySelector('[data-consent]').innerHTML = (j['同意事項'] || []).map((t, i) =>
+      `<li>${i === 0
+        ? `<a href="${esc(j['規約url'])}" target="_blank" rel="noopener">利用規約</a>・` +
+          `<a href="${esc(j['プライバシーurl'])}" target="_blank" rel="noopener">プライバシーポリシー</a>に同意します`
+        : esc(t)}</li>`).join('');
+  };
+  paintInit(init);
+  initP.then(j => {
+    const same = k => JSON.stringify(j[k]) === JSON.stringify(init[k]);
+    if (['キット', '時間帯', '同意事項', '規約url', 'プライバシーurl'].every(same)) return;
+    init = j;
+    paintInit(j);
+  }).catch(() => {});
 
   /* 2回目以降：前回のお名前・ご住所を入れておく（変わっていれば直してもらう）。
      後から届いたときは、お客様がもう打ち始めた欄は上書きしない */
@@ -1081,17 +1098,26 @@ async function viewApply(tpl) {
     note.textContent = 'LINE にログインし直しました。内容をご確認のうえ、もう一度「この内容で申し込む」を押してください。';
     form.insertBefore(note, form.firstChild);
   }
-  fillPrev(prev);
-  /* 写し（端末に1日残る）で入れたあと、サーバーが「前回なし」と返したら写しの分を空に戻す
-     （スタッフがお客様を消した・LINE の紐づけを外した＝261029。別の人の名前が残ったまま申し込まれないように） */
-  prevP.then(pv => {
-    if (pv && !Object.keys(pv).length && prev && Object.keys(prev).length) {
-      PREV_FIELDS.forEach(n => { if (F(n) && prev[n] && F(n).value === prev[n]) F(n).value = ''; });
-      const note = !draft && form.querySelector('.prefill');
-      if (note) note.remove();
-      return;
-    }
-    fillPrev(pv);
+  /* LIFF は待たずに描いてある。紐づけが済んだら、文と前回の入力（端末の写し → サーバー）を足す */
+  const lead = node.querySelector('[data-f=入口説明]');
+  initLiff(CFG.LIFF_APPLY, false).catch(() => false).then(ok => {
+    line = !!ok;
+    if (!line) return;
+    lead.textContent = 'LINEアカウントと紐づけてお申し込みします。ID・パスワードは必要ありません。';
+    const prev = loadStore('prev');
+    fillPrev(prev);
+    api('apply.init', null, { quiet: true }).then(j => { const pv = j['前回'] || {}; saveStore('prev', pv); return pv; }).catch(() => null)
+      .then(pv => {
+        /* 写し（端末に1日残る）で入れたあと、サーバーが「前回なし」と返したら写しの分を空に戻す
+           （スタッフがお客様を消した・LINE の紐づけを外した＝261029。別の人の名前が残ったまま申し込まれないように） */
+        if (pv && !Object.keys(pv).length && prev && Object.keys(prev).length) {
+          PREV_FIELDS.forEach(n => { if (F(n) && prev[n] && F(n).value === prev[n]) F(n).value = ''; });
+          const note = !draft && form.querySelector('.prefill');
+          if (note) note.remove();
+          return;
+        }
+        fillPrev(pv);
+      });
   });
 
   /* 集荷希望日は翌々日を既定に、過去日は選べないようにする（日本時間で数える） */
